@@ -21,6 +21,9 @@ Authors include: Danielle Pace
 #include "vtkPlusDevice.h"
 #include "vtkIGSIORecursiveCriticalSection.h"
 
+// PlusDataCollection includes
+#include <vtkPlusCameraControlParameters.h>
+
 // VTK includes
 #include <vtkSmartPointer.h>
 
@@ -72,6 +75,14 @@ public:
 
   virtual bool IsTracker() const { return false; }
 
+  /*!
+    Copy the new imaging parameters into the current parameter set
+    It is up to subclasses to take the new imaging parameter set and apply it to their respective devices
+    /param newImagingParameters class containing the new ultrasound imaging parameters
+  */
+  virtual PlusStatus SetNewCameraControlParameters(const vtkPlusCameraControlParameters& newCameraControlParameters);
+  vtkGetObjectMacro(CameraControlParameters, vtkPlusCameraControlParameters);
+
 protected:
   /*! Constructor */
   vtkPlusMmfVideoSource();
@@ -96,12 +107,17 @@ protected:
 
   std::wstring GetCaptureDeviceName(unsigned int deviceId);
 
+  /*! Set changed camera control parameter to device */
+  virtual PlusStatus InternalApplyCameraControlParameterChange();
+
   int FrameIndex;
 
   vtkSmartPointer<vtkIGSIORecursiveCriticalSection> Mutex;
   igsioVideoFrame UncompressedVideoFrame;
   VideoFormat RequestedVideoFormat;
   VideoFormat ActiveVideoFormat;
+
+  vtkSmartPointer<vtkPlusCameraControlParameters> CameraControlParameters;
 
   MmfVideoSourceReader* MmfSourceReader;
 private:

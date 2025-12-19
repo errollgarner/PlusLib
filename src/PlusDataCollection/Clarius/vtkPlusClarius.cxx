@@ -91,12 +91,12 @@ protected:
   Callback function used when connecting
   Input value is the udpPort.
   */
-  static void ConnectReturnFn(int udpPort, int swRevMatch);
+  static void ConnectReturnFn(int udpPort, int imuPort, int swRevMatch);
 
   /*!
   Callback function for raw data request
   */
-  static void RawDataRequestFn(int rawDataSize);
+  static void RawDataRequestFn(int rawDataSize, const char* extension);
 
   /*!
   Callback function for raw data read
@@ -219,7 +219,7 @@ long long int vtkPlusClarius::vtkInternal::SecondsToNanoSeconds(double s)
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusClarius::vtkInternal::ConnectReturnFn(int udpPort, int swRevMatch)
+void vtkPlusClarius::vtkInternal::ConnectReturnFn(int udpPort, int imuPort, int swRevMatch)
 {
   vtkPlusClarius* device = vtkPlusClarius::GetInstance();
   if (device == NULL)
@@ -702,7 +702,7 @@ PlusStatus vtkPlusClarius::vtkInternal::WritePosesToCsv(const CusProcessedImageI
 
 
 //----------------------------------------------------------------------------
-void vtkPlusClarius::vtkInternal::RawDataRequestFn(int rawDataSize)
+void vtkPlusClarius::vtkInternal::RawDataRequestFn(int rawDataSize, const char* extension)
 {
   vtkPlusClarius* device = vtkPlusClarius::GetInstance();
   if (!device)
@@ -736,7 +736,7 @@ PlusStatus vtkPlusClarius::vtkInternal::ReceiveRawData(int dataSize)
 
   CusReturnFn returnFunction = (CusReturnFn)(&vtkInternal::RawDataWriteFn);
   this->AllocateRawData(dataSize);
-  cusCastReadRawData(&this->RawDataPointer, returnFunction);
+  castReadRawData(&this->RawDataPointer, returnFunction);
   return PLUS_SUCCESS;
 }
 
@@ -857,12 +857,12 @@ vtkPlusClarius::~vtkPlusClarius()
 
   if (this->Connected)
   {
-    cusCastDisconnect(BLOCKINGCALL);
+    castDisconnect(BLOCKINGCALL);
   }
 
   if (this->Internal->Initialized)
   {
-    int destroyed = cusCastDestroy();
+    int destroyed = castDestroy();
     if (destroyed != 0)
     {
       LOG_ERROR("Error destoying the listener");
@@ -1173,16 +1173,21 @@ PlusStatus vtkPlusClarius::InternalConnect()
 
     try
     {
-      if (cusCastInit(0, NULL, this->Internal->PathToSecKey.c_str(),
-        processedImageCallbackPtr,
-        rawDataCallBackPtr,
-        nullptr, // ClariusSpectralImageInfo
-        freezeCallBackFnPtr,
-        buttonCallBackFnPtr,
-        progressCallBackFnPtr,
-        errorCallBackFnPtr,
-        this->FrameWidth,
-        this->FrameHeight) < 0)
+      CusInitParams initParams;
+      initParams.args.argc = 0;
+      initParams.args.argv = nullptr;
+      initParams.storeDir = this->Internal->PathToSecKey.c_str();
+      initParams.newProcessedImageFn = processedImageCallbackPtr;
+      initParams.newRawImageFn = rawDataCallBackPtr;
+      initParams.newSpectralImageFn = nullptr;
+      initParams.newImuDataFn = nullptr;
+      initParams.freezeFn = freezeCallBackFnPtr;
+      initParams.buttonFn = buttonCallBackFnPtr;
+      initParams.progressFn = progressCallBackFnPtr;
+      initParams.errorFn = errorCallBackFnPtr;
+      initParams.width = this->FrameWidth;
+      initParams.height = this->FrameHeight;
+      if (castInit(&initParams) < 0)
       {
         return PLUS_FAIL;
       }
@@ -1209,7 +1214,7 @@ PlusStatus vtkPlusClarius::InternalConnect()
     try
     {
       CusConnectFn returnFunction = (CusConnectFn)(&vtkInternal::ConnectReturnFn);
-      cusCastConnect(ip, this->TcpPort, "research", returnFunction);
+      castConnect(ip, this->TcpPort, "research", returnFunction);
 
       // Wait for the udp port to be determined.
       int maxConnectionAttempts = 20;
@@ -1244,7 +1249,7 @@ PlusStatus vtkPlusClarius::InternalConnect()
 
     if (this->Internal->UdpPort != -1)
     {
-      if (cusCastSetOutputSize(this->FrameWidth, this->FrameHeight) < 0)
+      if (castSetOutputSize(this->FrameWidth, this->FrameHeight) < 0)
       {
         LOG_DEBUG("Clarius Output size can not be set, falling back to default 640*480");
         this->FrameWidth = DEFAULT_FRAME_WIDTH;
@@ -1282,7 +1287,7 @@ PlusStatus vtkPlusClarius::InternalDisconnect()
   vtkPlusClarius* device = vtkPlusClarius::GetInstance();
   if (device->GetConnected())
   {
-    if (cusCastDisconnect(nullptr) < 0)
+    if (castDisconnect(nullptr) < 0)
     {
       LOG_ERROR("could not disconnect from scanner");
       return PLUS_FAIL;
@@ -1341,7 +1346,7 @@ PlusStatus vtkPlusClarius::RequestRawData(long long int startTimestamp, long lon
 
   this->Internal->IsReceivingRawData = true;
 
-  CusReturnFn returnFunction = (CusReturnFn)(&vtkInternal::RawDataRequestFn);
-  cusCastRequestRawData(startTimestamp, endTimestamp, 0, returnFunction);
+  CusRawRequestFn returnFunction = (CusRawRequestFn)(&vtkInternal::RawDataRequestFn);
+  castRequestRawData(startTimestamp, endTimestamp, 0, returnFunction);
   return PLUS_SUCCESS;
 }

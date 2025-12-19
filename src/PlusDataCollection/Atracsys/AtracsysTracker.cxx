@@ -28,7 +28,24 @@ See License.txt for details.
 #define RESET_DROPPED_FRAME_COUNT 1
 
 //----------------------------------------------------------------------------
-bool strToInt32(const std::string& str, int& var)
+// this method from https://thispointer.com/find-and-replace-all-occurrences-of-a-sub-string-in-c/
+void stringFindAndReplaceAll(std::string& data, std::string toSearch, std::string replaceStr)
+{
+  // Get the first occurrence
+  size_t pos = data.find(toSearch);
+
+  // Repeat till end is reached
+  while (pos != std::string::npos)
+  {
+    // Replace this occurrence of Sub String
+    data.replace(pos, toSearch.size(), replaceStr);
+    // Get the next occurrence from the current position
+    pos = data.find(toSearch, pos + replaceStr.size());
+  }
+}
+
+//----------------------------------------------------------------------------
+bool Atracsys::strToInt32(const std::string& str, int& var)
 {
   bool noexception = false;
   try
@@ -48,7 +65,7 @@ bool strToInt32(const std::string& str, int& var)
 }
 
 //----------------------------------------------------------------------------
-bool strToFloat32(const std::string& str, float& var)
+bool Atracsys::strToFloat32(const std::string& str, float& var)
 {
   bool noexception = false;
   try
@@ -67,88 +84,10 @@ bool strToFloat32(const std::string& str, float& var)
   return noexception;
 }
 
-//----------------------------------------------------------------------------
-class AtracsysTracker::AtracsysInternal
+//==============================================================================
+namespace Geometry
 {
-public:
-  AtracsysInternal()
-  {
-    // populate result to string
-    ResultToStringMap[ERROR_UNABLE_TO_GET_FTK_HANDLE] = "Unable to get Atracsys library handle.";
-    ResultToStringMap[ERROR_NO_DEVICE_CONNECTED] = "No Atracsys device connected.";
-    ResultToStringMap[ERROR_UNABLE_TO_LOAD_MARKER] = "Unable to load marker.";
-    ResultToStringMap[ERROR_FAILURE_TO_LOAD_INI] = "Failed to load marker's ini file.";
-    ResultToStringMap[ERROR_OPTION_AVAILABLE_ONLY_ON_FTK] = "Attempted to call fusionTrack only option with non-fusionTrack device connected.";
-    ResultToStringMap[ERROR_OPTION_AVAILABLE_ONLY_ON_STK] = "Attempted to call spryTrack only option with non-spryTrack device connected.";
-    ResultToStringMap[ERROR_FAILED_TO_CLOSE_SDK] = "Failed to close the Atracsys SDK.";
-    ResultToStringMap[ERROR_FAILED_TO_EXPORT_CALIB] = "Failed to export cameras calibration.";
-    ResultToStringMap[ERROR_FAILED_TO_EXTRACT_FRAME_INFO] = "Failed to extract frame info.";
-    ResultToStringMap[ERROR_CANNOT_CREATE_FRAME_INSTANCE] = "Failed to create frame.";
-    ResultToStringMap[ERROR_CANNOT_INITIALIZE_FRAME] = "Failed to initialize frame.";
-    ResultToStringMap[ERROR_NO_FRAME_AVAILABLE] = "No frame available from tracker.";
-    ResultToStringMap[ERROR_INVALID_FRAME] = "Invalid frame received from tracker.";
-    ResultToStringMap[ERROR_TOO_MANY_MARKERS] = "Too many markers in frame.";
-    ResultToStringMap[ERROR_ENABLE_LASER] = "Failed to enable laser, this is a spryTrack only option.";
-    ResultToStringMap[ERROR_SET_USER_LED] = "Failed to set the user LED.";
-    ResultToStringMap[ERROR_ENABLE_USER_LED] = "Failed to enable / disable the user LED.";
-    ResultToStringMap[ERROR_ENABLE_IMAGE_STREAMING] = "Failed to enable / disable image streaming.";
-    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_PAIRING] = "Failed to enable / disable wireless marker pairing.";
-    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_STATUS_STREAMING] = "Failed to enable / disable wireless marker status streaming.";
-    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_BATTERY_STREAMING] = "Failed to enable / disable wireless marker battery streaming.";
-    ResultToStringMap[ERROR_DISCONNECT_ATTEMPT_WHEN_NOT_CONNECTED] = "Disconnect called when not connected to tracker.";
-    ResultToStringMap[ERROR_CANNOT_GET_MARKER_INFO] = "Cannot get info about paired wireless markers.";
-    ResultToStringMap[ERROR_FAILED_TO_SET_STK_PROCESSING_TYPE] = "Failed to set spryTrack image processing type.";
-  }
-
-  virtual ~AtracsysInternal()
-  {
-    FtkLib = nullptr;
-    LibVersion = "";
-    TrackerSN = 0;
-  }
-
-  // handle to FtkLib library
-  ftkLibrary FtkLib = nullptr;
-
-  // library version 
-  std::string LibVersion;
-
-  // serial number of tracker
-  uint64 TrackerSN = 0;
-
-  // ftk frame data
-  ftkFrameQuery* Frame = nullptr;
-
-  // mapping error code to user readable result string
-  std::map<AtracsysTracker::ATRACSYS_RESULT, std::string> ResultToStringMap;
-
-  // helper function to load ftkGeometry from file
-  ATRACSYS_RESULT LoadFtkGeometryFromFile(const std::string& filename, ftkGeometry& geom);
-
-  // helper function to load ftkGeometry from string
-  ATRACSYS_RESULT LoadFtkGeometryFromString(const std::string& geomString, ftkGeometry& geom);
-
-  std::map<int, std::vector<std::array<float, 3>>> Geometries;
-
-  // correspondence between atracsys option name and its actual id in the sdk
-  // this map is filled automatically by the sdk, DO NOT hardcode/change any id
-  std::map<std::string, ftkOptionsInfo> DeviceOptionMap{};
-
-  //----------------------------------------------------------------------------
-  // callback function stores all option id
-  static void DeviceOptionEnumerator(uint64_t serialNumber, void* userData, ftkOptionsInfo* option)
-  {
-    AtracsysTracker::AtracsysInternal* ptr =
-      reinterpret_cast<AtracsysTracker::AtracsysInternal*>(userData);
-    if (!ptr)
-    {
-      return;
-    }
-    ptr->DeviceOptionMap.emplace(option->name, *option);
-  }
-
-  // Code from ATRACSYS
-  class IniFile
+  class IniFile // Based on code from ATRACSYS
   {
   protected:
     //----------------------------------------------------------------------------
@@ -224,15 +163,7 @@ public:
 
         if (lineSize != 0)
         {
-          if (lineSize > 0)
-          {
-            strLine = std::string(addr, lineSize);
-          }
-          else
-          {
-            strLine = std::string(addr);
-          }
-
+          strLine = (lineSize > 0) ? std::string(addr, lineSize) : std::string(addr);
           strLine.erase(remove(strLine.begin(), strLine.end(), '\r'), strLine.end());
           if (!parseLine(strLine))
           {
@@ -354,8 +285,7 @@ public:
   }
 
   //----------------------------------------------------------------------------
-  bool assignUint32(IniFile& p, const std::string& section,
-    const std::string& key,
+  bool assignUint32(IniFile& p, const std::string& section, const std::string& key,
     uint32* variable)
   {
     if (!checkKey(p, section, key))
@@ -372,8 +302,7 @@ public:
   }
 
   //----------------------------------------------------------------------------
-  bool assignFloatXX(IniFile& p, const std::string& section,
-    const std::string& key,
+  bool assignFloatXX(IniFile& p, const std::string& section, const std::string& key,
     floatXX* variable)
   {
     if (!checkKey(p, section, key))
@@ -387,6 +316,99 @@ public:
       floatXX(strtod(p.sections[section][key].c_str(), &pEnd));
 
     return true;
+  }
+} // end of Geometry namespace
+
+using namespace Atracsys;
+
+//==============================================================================
+class Tracker::Internal
+{
+public:
+  Internal()
+  {
+    // populate result to string
+    ResultToStringMap[ERROR_UNABLE_TO_GET_FTK_HANDLE] = "Unable to get Atracsys library handle.";
+    ResultToStringMap[ERROR_NO_DEVICE_CONNECTED] = "No Atracsys device connected.";
+    ResultToStringMap[ERROR_UNABLE_TO_LOAD_MARKER] = "Unable to load marker.";
+    ResultToStringMap[ERROR_FAILURE_TO_LOAD_INI] = "Failed to load marker's ini file.";
+    ResultToStringMap[ERROR_OPTION_AVAILABLE_ONLY_ON_FTK] = "Attempted to call fusionTrack only option with non-fusionTrack device connected.";
+    ResultToStringMap[ERROR_OPTION_AVAILABLE_ONLY_ON_STK] = "Attempted to call spryTrack only option with non-spryTrack device connected.";
+    ResultToStringMap[ERROR_FAILED_TO_CLOSE_SDK] = "Failed to close the Atracsys SDK.";
+    ResultToStringMap[ERROR_FAILED_TO_EXPORT_CALIB] = "Failed to export cameras calibration.";
+    ResultToStringMap[ERROR_FAILED_TO_EXTRACT_FRAME_INFO] = "Failed to extract frame info.";
+    ResultToStringMap[ERROR_CANNOT_CREATE_FRAME_INSTANCE] = "Failed to create frame.";
+    ResultToStringMap[ERROR_CANNOT_INITIALIZE_FRAME] = "Failed to initialize frame.";
+    ResultToStringMap[ERROR_NO_FRAME_AVAILABLE] = "No frame available from tracker.";
+    ResultToStringMap[ERROR_INVALID_FRAME] = "Invalid frame received from tracker.";
+    ResultToStringMap[ERROR_TOO_MANY_MARKERS] = "Too many markers in frame.";
+    ResultToStringMap[ERROR_ENABLE_LASER] = "Failed to enable laser, this is a spryTrack only option.";
+    ResultToStringMap[ERROR_SET_USER_LED] = "Failed to set the user LED.";
+    ResultToStringMap[ERROR_ENABLE_USER_LED] = "Failed to enable / disable the user LED.";
+    ResultToStringMap[ERROR_ENABLE_IMAGE_STREAMING] = "Failed to enable / disable image streaming.";
+    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_PAIRING] = "Failed to enable / disable wireless marker pairing.";
+    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_STATUS_STREAMING] = "Failed to enable / disable wireless marker status streaming.";
+    ResultToStringMap[ERROR_ENABLE_WIRELESS_MARKER_BATTERY_STREAMING] = "Failed to enable / disable wireless marker battery streaming.";
+    ResultToStringMap[ERROR_DISCONNECT_ATTEMPT_WHEN_NOT_CONNECTED] = "Disconnect called when not connected to tracker.";
+    ResultToStringMap[ERROR_CANNOT_GET_MARKER_INFO] = "Cannot get info about paired wireless markers.";
+    ResultToStringMap[ERROR_FAILED_TO_SET_STK_PROCESSING_TYPE] = "Failed to set spryTrack image processing type.";
+  }
+
+  virtual ~Internal()
+  {
+    FtkLib = nullptr;
+    LibVersion = "";
+    CalibrationDate = "";
+    TrackerSN = 0;
+  }
+
+  // is virtual device or not
+  bool isVirtual = false;
+
+  // is paused or not
+  bool isPaused = true;
+
+  // handle to FtkLib library
+  ftkLibrary FtkLib = nullptr;
+
+  // library version 
+  std::string LibVersion;
+
+  // calibration date
+  std::string CalibrationDate;
+
+  // serial number of tracker
+  uint64 TrackerSN = 0;
+
+  // ftk frame data
+  ftkFrameQuery* Frame = nullptr;
+
+  // mapping error code to user readable result string
+  std::map<RESULT, std::string> ResultToStringMap;
+
+  // helper function to load ftkGeometry from file
+  RESULT LoadFtkGeometryFromFile(const std::string& filename, ftkGeometry& geom);
+
+  // helper function to load ftkGeometry from string
+  RESULT LoadFtkGeometryFromString(const std::string& geomString, ftkGeometry& geom);
+
+  std::map<int, std::vector<std::array<float, 3>>> Geometries;
+
+  // correspondence between atracsys option name and its actual id in the sdk
+  // this map is filled automatically by the sdk, DO NOT hardcode/change any id
+  std::map<std::string, ftkOptionsInfo> DeviceOptionMap{};
+
+  //----------------------------------------------------------------------------
+  // callback function stores all option id
+  static void DeviceOptionEnumerator(uint64_t serialNumber, void* userData, ftkOptionsInfo* option)
+  {
+    Tracker::Internal* ptr =
+      reinterpret_cast<Tracker::Internal*>(userData);
+    if (!ptr)
+    {
+      return;
+    }
+    ptr->DeviceOptionMap.emplace(option->name, *option);
   }
 
   //----------------------------------------------------------------------------
@@ -404,28 +426,11 @@ public:
   }
 
   //----------------------------------------------------------------------------
-  // this method from https://thispointer.com/find-and-replace-all-occurrences-of-a-sub-string-in-c/
-  void stringFindAndReplaceAll(std::string& data, std::string toSearch, std::string replaceStr)
-  {
-    // Get the first occurrence
-    size_t pos = data.find(toSearch);
-
-    // Repeat till end is reached
-    while (pos != std::string::npos)
-    {
-      // Replace this occurrence of Sub String
-      data.replace(pos, toSearch.size(), replaceStr);
-      // Get the next occurrence from the current position
-      pos = data.find(toSearch, pos + replaceStr.size());
-    }
-  }
-
-  //----------------------------------------------------------------------------
   bool ParseIniFile(std::string fileContent, ftkGeometry& geometry)
   {
     stringFindAndReplaceAll(fileContent, "\\n", "\n");
 
-    IniFile parser;
+    Geometry::IniFile parser;
 
     if (!parser.parse(const_cast<char*>(fileContent.c_str()),
       fileContent.size()))
@@ -489,7 +494,7 @@ public:
 
     return true;
   }
-};
+}; // end of Tracker::Internal
 
 //----------------------------------------------------------------------------
 struct DeviceData
@@ -510,7 +515,7 @@ void FusionTrackEnumerator(uint64 sn, void* user, ftkDeviceType devType)
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::AtracsysInternal::LoadFtkGeometryFromFile(const std::string& filename, ftkGeometry& geom)
+Tracker::RESULT Tracker::Internal::LoadFtkGeometryFromFile(const std::string& filename, ftkGeometry& geom)
 {
   std::ifstream input;
   input.open(filename.c_str());
@@ -541,10 +546,9 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::AtracsysInternal::LoadFtkGeome
 
   return ERROR_FAILURE_TO_LOAD_INI;
 }
-// END CODE FROM ATRACSYS
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::AtracsysInternal::LoadFtkGeometryFromString(const std::string& geomString, ftkGeometry& geom)
+Tracker::RESULT Tracker::Internal::LoadFtkGeometryFromString(const std::string& geomString, ftkGeometry& geom)
 {
   if (this->ParseIniFile(geomString, geom))
   {
@@ -557,10 +561,10 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::AtracsysInternal::LoadFtkGeome
 // provided an option name with Atracsys' nomenclature, this method returns the pointer
 // to the corresponding ftkOptionsInfo which contains various information about the option
 // (notably its id and value type)
-bool AtracsysTracker::GetOptionInfo(const std::string& optionName, const ftkOptionsInfo*& info)
+bool Tracker::GetOptionInfo(const std::string& optionName, const ftkOptionsInfo*& info)
 {
-  std::map<std::string, ftkOptionsInfo>::const_iterator it = this->Internal->DeviceOptionMap.find(optionName);
-  if (it == this->Internal->DeviceOptionMap.cend())
+  std::map<std::string, ftkOptionsInfo>::const_iterator it = this->InternalObj->DeviceOptionMap.find(optionName);
+  if (it == this->InternalObj->DeviceOptionMap.cend())
   {
     return false;
   }
@@ -573,15 +577,25 @@ bool AtracsysTracker::GetOptionInfo(const std::string& optionName, const ftkOpti
 
 //----------------------------------------------------------------------------
 // this method sets a value to an option in the device. The option name follows Atracsys' nomenclature.
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetOption(const std::string& optionName, const std::string& attributeValue)
+Tracker::RESULT Tracker::SetOption(const std::string& optionName, const std::string& attributeValue)
 {
-  LOG_INFO(std::string("Setting option \"") + optionName + std::string("\" at value ") + attributeValue);
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
+  std::string optionStr{ optionName };
+  // if Embedded processing is on and the option has an Embedded variant, add the prefix
+  if (isOnboardProcessing && this->InternalObj->DeviceOptionMap.find("Embedded " + optionName) != this->InternalObj->DeviceOptionMap.end())
+  {
+    optionStr = "Embedded " + optionStr;
+  }
 
   const ftkOptionsInfo* info;
 
-  if (!this->GetOptionInfo(optionName, info))
+  if (!this->GetOptionInfo(optionStr, info))
   {
-    LOG_WARNING(std::string("Info for option \"") + optionName + std::string("\" not found."));
+    LOG_WARNING(std::string("Info for option \"") + optionStr + std::string("\" not found."));
     return ERROR_OPTION_NOT_FOUND;
   }
 
@@ -593,16 +607,16 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetOption(const std::string& o
       return ERROR_SET_OPTION;
     }
 
-    if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, val) != ftkError::FTK_OK)
+    if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, val) != ftkError::FTK_OK)
     {
       ftkBuffer buffer{};
-      if (ftkGetLastErrorString(this->Internal->FtkLib, sizeof(buffer.data), buffer.data) == ftkError::FTK_OK)
+      if (ftkGetLastErrorString(this->InternalObj->FtkLib, sizeof(buffer.data), buffer.data) == ftkError::FTK_OK)
       {
         LOG_WARNING(std::string(buffer.data));
       }
       else
       {
-        LOG_WARNING(std::string("Unknown error setting option ") + optionName);
+        LOG_WARNING(std::string("Unknown error setting option ") + optionStr);
       }
     }
   }
@@ -614,16 +628,16 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetOption(const std::string& o
       return ERROR_SET_OPTION;
     }
 
-    if (ftkSetFloat32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, val) != ftkError::FTK_OK)
+    if (ftkSetFloat32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, val) != ftkError::FTK_OK)
     {
       ftkBuffer buffer{};
-      if (ftkGetLastErrorString(this->Internal->FtkLib, sizeof(buffer.data), buffer.data) == ftkError::FTK_OK)
+      if (ftkGetLastErrorString(this->InternalObj->FtkLib, sizeof(buffer.data), buffer.data) == ftkError::FTK_OK)
       {
         LOG_WARNING(std::string(buffer.data));
       }
       else
       {
-        LOG_WARNING(std::string("Unknown error setting option ") + optionName);
+        LOG_WARNING(std::string("Unknown error setting option ") + optionStr);
       }
     }
   }
@@ -631,6 +645,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetOption(const std::string& o
   {
     LOG_WARNING(std::string("Option of type \"data\" not supported yet"));
   }
+  LOG_INFO(std::string("Option \"") + optionStr + std::string("\" successfully set at value ") + attributeValue);
 
   return SUCCESS;
 }
@@ -639,28 +654,46 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetOption(const std::string& o
 // universally available options & methods
 // ------------------------------------------
 
-AtracsysTracker::AtracsysTracker()
-  : Internal(new AtracsysInternal()) {}
+Tracker::Tracker()
+  : InternalObj(new Internal()) {}
 
-AtracsysTracker::~AtracsysTracker()
+Tracker::~Tracker()
 {
-  delete Internal;
-  Internal = nullptr;
+  delete InternalObj;
+  InternalObj = nullptr;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::Connect()
+void Tracker::Pause(bool tof)
 {
-  if (this->Internal->FtkLib != nullptr && this->Internal->TrackerSN != 0)
+  this->InternalObj->isPaused = tof;
+}
+
+//----------------------------------------------------------------------------
+bool Tracker::IsOnboardProcessing()
+{
+  return isOnboardProcessing;
+}
+
+//----------------------------------------------------------------------------
+bool Tracker::IsVirtual()
+{
+  return this->InternalObj->isVirtual;
+}
+
+//----------------------------------------------------------------------------
+Tracker::RESULT Tracker::Connect()
+{
+  if (this->InternalObj->FtkLib != nullptr && this->InternalObj->TrackerSN != 0)
   {
     // already connected
     return SUCCESS;
   }
 
   // initialize SDK
-  this->Internal->FtkLib = ftkInit();
+  this->InternalObj->FtkLib = ftkInit();
 
-  if (this->Internal->FtkLib == NULL)
+  if (this->InternalObj->FtkLib == NULL)
   {
     return ERROR_UNABLE_TO_GET_FTK_HANDLE;
   }
@@ -669,26 +702,26 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::Connect()
   device.SerialNumber = 0uLL;
 
   // scan for devices
-  ftkError err = ftkEnumerateDevices(this->Internal->FtkLib, FusionTrackEnumerator, &device);
+  ftkError err = ftkEnumerateDevices(this->InternalObj->FtkLib, FusionTrackEnumerator, &device);
   if (err != ftkError::FTK_OK && err != ftkError::FTK_WAR_USB_TOO_SLOW)
   {
-    ftkClose(&this->Internal->FtkLib);
-    this->Internal->FtkLib = nullptr;
+    ftkClose(&this->InternalObj->FtkLib);
+    this->InternalObj->FtkLib = nullptr;
     return ERROR_NO_DEVICE_CONNECTED;
   }
 
   if (device.SerialNumber == 0uLL)
   {
-    ftkClose(&this->Internal->FtkLib);
-    this->Internal->FtkLib = nullptr;
+    ftkClose(&this->InternalObj->FtkLib);
+    this->InternalObj->FtkLib = nullptr;
     return ERROR_NO_DEVICE_CONNECTED;
   }
 
-  this->Internal->TrackerSN = device.SerialNumber;
+  this->InternalObj->TrackerSN = device.SerialNumber;
 
   ftkBuffer sdkVersion;
   ftkVersion(&sdkVersion);
-  this->Internal->LibVersion = sdkVersion.data;
+  this->InternalObj->LibVersion = sdkVersion.data;
 
   switch (device.Type)
   {
@@ -709,48 +742,81 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::Connect()
   }
 
   // allocate memory for ftk frame to be used throughout life of the object
-  this->Internal->Frame = ftkCreateFrame();
+  this->InternalObj->Frame = ftkCreateFrame();
 
-  if (this->Internal->Frame == nullptr)
+  if (this->InternalObj->Frame == nullptr)
   {
-    ftkDeleteFrame(this->Internal->Frame);
-    this->Internal->Frame = nullptr;
+    ftkDeleteFrame(this->InternalObj->Frame);
+    this->InternalObj->Frame = nullptr;
     return ERROR_CANNOT_CREATE_FRAME_INSTANCE;
   }
 
   if (ftkSetFrameOptions(false, this->MaxAdditionalEventsNumber,
     this->Max2dFiducialsNumber, this->Max2dFiducialsNumber,
     this->Max3dFiducialsNumber, this->MaxMarkersNumber,
-    this->Internal->Frame) != ftkError::FTK_OK)
+    this->InternalObj->Frame) != ftkError::FTK_OK)
   {
-    ftkDeleteFrame(this->Internal->Frame);
-    this->Internal->Frame = nullptr;
+    ftkDeleteFrame(this->InternalObj->Frame);
+    this->InternalObj->Frame = nullptr;
     return ERROR_CANNOT_INITIALIZE_FRAME;
   }
 
-  if (ftkEnumerateOptions(this->Internal->FtkLib, this->Internal->TrackerSN,
-    &AtracsysTracker::AtracsysInternal::DeviceOptionEnumerator, this->Internal) != ftkError::FTK_OK
-    || this->Internal->DeviceOptionMap.find("Data Directory") == this->Internal->DeviceOptionMap.cend())
+  if (ftkEnumerateOptions(this->InternalObj->FtkLib, this->InternalObj->TrackerSN,
+    &Tracker::Internal::DeviceOptionEnumerator, this->InternalObj) != ftkError::FTK_OK
+    || this->InternalObj->DeviceOptionMap.find("Data Directory") == this->InternalObj->DeviceOptionMap.cend())
   {
     return ERROR_OPTION_NOT_FOUND;
+  }
+
+  // Needs to be after the device option enumeration
+  const ftkOptionsInfo* info;
+  if (!this->GetOptionInfo("Calibration processing datetime", info))
+  {
+    LOG_ERROR("Option unknown: \"Calibration processing datetime\"");
+    return ERROR_OPTION_NOT_FOUND;
+  }
+  ftkBuffer buff;
+  ftkGetData(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, &buff);
+  this->InternalObj->CalibrationDate = std::string(buff.data);
+
+  // Check whether onboard processing is off or on (spryTrack only)
+  if (this->DeviceType == SPRYTRACK_180 || this->DeviceType == SPRYTRACK_300)
+  {
+    if (!this->GetOptionInfo("Enable embedded processing", info))
+    {
+      LOG_WARNING(std::string("Embedded processing not part of the option list."));
+      return ERROR_OPTION_NOT_FOUND;
+    }
+    else
+    {
+      int32 val;
+      ftkGetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, &val, ftkOptionGetter::FTK_VALUE);
+      isOnboardProcessing = (val == 1) ? true : false;
+      LOG_INFO("Embedded processing is initially " << (isOnboardProcessing ? "enabled" : "disabled"));
+    }
   }
 
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::Disconnect()
+Tracker::RESULT Tracker::Disconnect()
 {
-  if (this->Internal->FtkLib == nullptr && this->Internal->TrackerSN == 0)
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
+  if (this->InternalObj->FtkLib == nullptr && this->InternalObj->TrackerSN == 0)
   {
     return ERROR_DISCONNECT_ATTEMPT_WHEN_NOT_CONNECTED;
   }
 
   // de-allocate memory for frame
-  ftkDeleteFrame(this->Internal->Frame);
-  this->Internal->Frame = nullptr;
+  ftkDeleteFrame(this->InternalObj->Frame);
+  this->InternalObj->Frame = nullptr;
 
-  ftkError err = ftkClose(&this->Internal->FtkLib);
+  ftkError err = ftkClose(&this->InternalObj->FtkLib);
   if (err != ftkError::FTK_OK)
   {
     return ERROR_FAILED_TO_CLOSE_SDK;
@@ -759,32 +825,39 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::Disconnect()
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetSDKversion(std::string& version)
+Tracker::RESULT Tracker::GetSDKversion(std::string& version)
 {
-  version = this->Internal->LibVersion;
+  version = this->InternalObj->LibVersion;
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetDeviceType(DEVICE_TYPE& deviceType)
+Tracker::RESULT Tracker::GetCalibrationDate(std::string& date)
+{
+  date = this->InternalObj->CalibrationDate;
+  return SUCCESS;
+}
+
+//----------------------------------------------------------------------------
+Tracker::RESULT Tracker::GetDeviceType(DEVICE_TYPE& deviceType)
 {
   deviceType = this->DeviceType;
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetCamerasCalibration(
+Tracker::RESULT Tracker::GetCamerasCalibration(
   std::array<float, 10>& leftIntrinsic, std::array<float, 10>& rightIntrinsic,
   std::array<float, 3>& rightPosition, std::array<float, 3>& rightOrientation)
 {
-  if (this->SetOption("Calibration export", "1") != SUCCESS)
+  if (!this->InternalObj->isVirtual || this->SetOption("Calibration export", "1") != SUCCESS)
   {
     LOG_ERROR("Could not export calibration.");
     return ERROR_FAILED_TO_EXPORT_CALIB;
   }
   else
   {
-    if (ftkGetLastFrame(this->Internal->FtkLib, this->Internal->TrackerSN, this->Internal->Frame, 20) != ftkError::FTK_OK)
+    if (ftkGetLastFrame(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, this->InternalObj->Frame, 20) != ftkError::FTK_OK)
     {
       return ERROR_NO_FRAME_AVAILABLE;
     }
@@ -792,7 +865,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetCamerasCalibration(
     {
       ftkFrameInfoData info;
       info.WantedInformation = ftkInformationType::CalibrationParameters;
-      if (ftkExtractFrameInfo(this->Internal->Frame, &info) != ftkError::FTK_OK)
+      if (ftkExtractFrameInfo(this->InternalObj->Frame, &info) != ftkError::FTK_OK)
       {
         return ERROR_FAILED_TO_EXTRACT_FRAME_INFO;
       }
@@ -816,18 +889,19 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetCamerasCalibration(
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetDeviceId(uint64_t& id)
+Tracker::RESULT Tracker::GetDeviceId(uint64_t& id)
 {
-  id = this->Internal->TrackerSN;
+  id = this->InternalObj->TrackerSN;
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::LoadMarkerGeometryFromFile(std::string filePath, int& geometryId)
+Tracker::RESULT Tracker::LoadMarkerGeometryFromFile(std::string filePath, int& geometryId)
 {
   ftkGeometry geom;
-  this->Internal->LoadFtkGeometryFromFile(filePath, geom);
-  if (ftkSetGeometry(this->Internal->FtkLib, this->Internal->TrackerSN, &geom) != ftkError::FTK_OK)
+  this->InternalObj->LoadFtkGeometryFromFile(filePath, geom);
+  if (!this->InternalObj->isVirtual &&
+    ftkSetGeometry(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, &geom) != ftkError::FTK_OK)
   {
     return ERROR_UNABLE_TO_LOAD_MARKER;
   }
@@ -836,11 +910,12 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::LoadMarkerGeometryFromFile(std
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::LoadMarkerGeometryFromString(std::string geomString, int& geometryId)
+Tracker::RESULT Tracker::LoadMarkerGeometryFromString(std::string geomString, int& geometryId)
 {
   ftkGeometry geom;
-  this->Internal->LoadFtkGeometryFromString(geomString, geom);
-  if (ftkSetGeometry(this->Internal->FtkLib, this->Internal->TrackerSN, &geom) != ftkError::FTK_OK)
+  this->InternalObj->LoadFtkGeometryFromString(geomString, geom);
+  if (!this->InternalObj->isVirtual &&
+    ftkSetGeometry(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, &geom) != ftkError::FTK_OK)
   {
     return ERROR_UNABLE_TO_LOAD_MARKER;
   }
@@ -849,8 +924,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::LoadMarkerGeometryFromString(s
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkerInfo(std::string& markerInfo)
+Tracker::RESULT Tracker::GetMarkerInfo(std::string& markerInfo)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return ERROR_CANNOT_GET_MARKER_INFO;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Active Wireless Markers info", info))
@@ -859,7 +939,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkerInfo(std::string& mar
   }
 
   ftkBuffer buffer;
-  if (ftkGetData(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, &buffer) != ftkError::FTK_OK)
+  if (ftkGetData(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, &buffer) != ftkError::FTK_OK)
   {
     return ERROR_CANNOT_GET_MARKER_INFO;
   }
@@ -868,18 +948,18 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkerInfo(std::string& mar
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetLoadedGeometries(std::map<int, std::vector<std::array<float, 3>>>& geometries)
+Tracker::RESULT Tracker::GetLoadedGeometries(std::map<int, std::vector<std::array<float, 3>>>& geometries)
 {
-  geometries = this->Internal->Geometries;
+  geometries = this->InternalObj->Geometries;
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-std::string AtracsysTracker::ResultToString(AtracsysTracker::ATRACSYS_RESULT result)
+std::string Tracker::ResultToString(Tracker::RESULT result)
 {
-  std::map<AtracsysTracker::ATRACSYS_RESULT, std::string>::iterator it;
-  it = this->Internal->ResultToStringMap.find(result);
-  if (it != end(this->Internal->ResultToStringMap))
+  std::map<Tracker::RESULT, std::string>::iterator it;
+  it = this->InternalObj->ResultToStringMap.find(result);
+  if (it != std::end(this->InternalObj->ResultToStringMap))
   {
     return it->second;
   }
@@ -887,15 +967,16 @@ std::string AtracsysTracker::ResultToString(AtracsysTracker::ATRACSYS_RESULT res
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<Marker>& markers, std::map<std::string, std::string>& events)
+Tracker::RESULT Tracker::GetFiducialsInFrame(std::vector<Fiducial>& fiducials,
+  std::map<std::string, std::string>& events, uint64_t& sdkTimestamp)
 {
-  ftkError err = ftkGetLastFrame(this->Internal->FtkLib, this->Internal->TrackerSN, this->Internal->Frame, 20);
+  ftkError err = ftkGetLastFrame(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, this->InternalObj->Frame, 20);
   if (err != ftkError::FTK_OK)
   {
     return ERROR_NO_FRAME_AVAILABLE;
   }
 
-  switch (this->Internal->Frame->markersStat)
+  switch (this->InternalObj->Frame->markersStat)
   {
   case ftkQueryStatus::QS_WAR_SKIPPED:
     return ERROR_INVALID_FRAME;
@@ -907,7 +988,96 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
     return ERROR_INVALID_FRAME;
   }
 
-  if (this->Internal->Frame->markersStat == ftkQueryStatus::QS_ERR_OVERFLOW)
+  if (this->InternalObj->Frame->markersStat == ftkQueryStatus::QS_ERR_OVERFLOW)
+  {
+    return ERROR_TOO_MANY_MARKERS;
+  }
+
+  // make sure fiducials vector is empty before populating
+  fiducials.clear();
+
+  for (uint32 f = 0; f < this->InternalObj->Frame->threeDFiducialsCount; f++)
+  {
+    Fiducial fid;
+    // 3D stuff
+    const ftk3DFiducial& ftkFid3d = this->InternalObj->Frame->threeDFiducials[f];
+    fid.Fid3dStatus = ftkFid3d.status;
+    fid.xMm = ftkFid3d.positionMM.x;
+    fid.yMm = ftkFid3d.positionMM.y;
+    fid.zMm = ftkFid3d.positionMM.z;
+    fid.epipolarErrorPx = ftkFid3d.epipolarErrorPixels;
+    fid.probability = ftkFid3d.probability;
+    fid.triangulErrorMm = ftkFid3d.triangulationErrorMM;
+    // Left 2D stuff
+    const ftkRawData& leftRaw = this->InternalObj->Frame->rawDataLeft[ftkFid3d.leftIndex];
+    fid.Fid2dLeftStatus = leftRaw.status;
+    fid.xLeftPx = leftRaw.centerXPixels;
+    fid.yLeftPx = leftRaw.centerYPixels;
+    fid.heightLeftPx = leftRaw.height;
+    fid.widthLeftPx = leftRaw.width;
+    fid.pixCountLeft = leftRaw.pixelsCount;
+    // Right 2D stuff
+    const ftkRawData& rightRaw = this->InternalObj->Frame->rawDataRight[ftkFid3d.rightIndex];
+    fid.Fid2dRightStatus = rightRaw.status;
+    fid.xRightPx = rightRaw.centerXPixels;
+    fid.yRightPx = rightRaw.centerYPixels;
+    fid.heightRightPx = rightRaw.height;
+    fid.widthRightPx = rightRaw.width;
+    fid.pixCountRight = rightRaw.pixelsCount;
+
+    fiducials.push_back(fid);
+  }
+
+  // make sure events map is empty before populating
+  events.clear();
+
+  // Parse events
+  for (size_t e = 0; e < this->InternalObj->Frame->eventsCount; e++)
+  {
+    const ftkEvent& event = *this->InternalObj->Frame->events[e];
+
+    if (event.Type == FtkEventType::fetTempV4)
+    {
+      std::stringstream ss;
+      const EvtTemperatureV4Payload* ptr = reinterpret_cast<EvtTemperatureV4Payload*>(event.Data);
+      for (unsigned int i = 0; i < event.Payload / sizeof(EvtTemperatureV4Payload) - 1; i++, ++ptr)
+      {
+        ss << ptr->SensorId << " " << ptr->SensorValue << " ";
+      }
+      ss << ptr->SensorId << " " << ptr->SensorValue;
+      events.emplace("tempv4", ss.str());
+    }
+  }
+
+  // Save sdk timestamp
+  sdkTimestamp = this->InternalObj->Frame->imageHeader->timestampUS;
+
+  return SUCCESS;
+}
+
+//----------------------------------------------------------------------------
+Tracker::RESULT Tracker::GetMarkersInFrame(std::vector<Marker>& markers,
+  std::map<std::string, std::string>& events, uint64_t& sdkTimestamp)
+{
+  ftkError err = ftkGetLastFrame(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, this->InternalObj->Frame, 20);
+  if (err != ftkError::FTK_OK)
+  {
+    return ERROR_NO_FRAME_AVAILABLE;
+  }
+
+  switch (this->InternalObj->Frame->markersStat)
+  {
+  case ftkQueryStatus::QS_WAR_SKIPPED:
+    return ERROR_INVALID_FRAME;
+  case ftkQueryStatus::QS_ERR_INVALID_RESERVED_SIZE:
+    return ERROR_INVALID_FRAME;
+  case ftkQueryStatus::QS_OK:
+    break;
+  default:
+    return ERROR_INVALID_FRAME;
+  }
+
+  if (this->InternalObj->Frame->markersStat == ftkQueryStatus::QS_ERR_OVERFLOW)
   {
     return ERROR_TOO_MANY_MARKERS;
   }
@@ -915,9 +1085,9 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
   // make sure markers vector is empty before populating
   markers.clear();
 
-  for (size_t m = 0; m < this->Internal->Frame->markersCount; m++)
+  for (size_t m = 0; m < this->InternalObj->Frame->markersCount; m++)
   {
-    const ftkMarker& marker = this->Internal->Frame->markers[m];
+    const ftkMarker& marker = this->InternalObj->Frame->markers[m];
 
     // A marker
     vtkNew<vtkMatrix4x4> toolToTracker;
@@ -945,7 +1115,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
       {
         Fiducial fid;
         // 3D stuff
-        const ftk3DFiducial& ftkFid3d = this->Internal->Frame->threeDFiducials[f];
+        const ftk3DFiducial& ftkFid3d = this->InternalObj->Frame->threeDFiducials[f];
         fid.Fid3dStatus = ftkFid3d.status;
         fid.xMm = ftkFid3d.positionMM.x;
         fid.yMm = ftkFid3d.positionMM.y;
@@ -954,7 +1124,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
         fid.probability = ftkFid3d.probability;
         fid.triangulErrorMm = ftkFid3d.triangulationErrorMM;
         // Left 2D stuff
-        const ftkRawData& leftRaw = this->Internal->Frame->rawDataLeft[ftkFid3d.leftIndex];
+        const ftkRawData& leftRaw = this->InternalObj->Frame->rawDataLeft[ftkFid3d.leftIndex];
         fid.Fid2dLeftStatus = leftRaw.status;
         fid.xLeftPx = leftRaw.centerXPixels;
         fid.yLeftPx = leftRaw.centerYPixels;
@@ -962,7 +1132,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
         fid.widthLeftPx = leftRaw.width;
         fid.pixCountLeft = leftRaw.pixelsCount;
         // Right 2D stuff
-        const ftkRawData& rightRaw = this->Internal->Frame->rawDataRight[ftkFid3d.rightIndex];
+        const ftkRawData& rightRaw = this->InternalObj->Frame->rawDataRight[ftkFid3d.rightIndex];
         fid.Fid2dRightStatus = rightRaw.status;
         fid.xRightPx = rightRaw.centerXPixels;
         fid.yRightPx = rightRaw.centerYPixels;
@@ -983,9 +1153,9 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
   events.clear();
 
   // Parse events
-  for (size_t e = 0; e < this->Internal->Frame->eventsCount; e++)
+  for (size_t e = 0; e < this->InternalObj->Frame->eventsCount; e++)
   {
-    const ftkEvent& event = *this->Internal->Frame->events[e];
+    const ftkEvent& event = *this->InternalObj->Frame->events[e];
 
     if (event.Type == FtkEventType::fetTempV4)
     {
@@ -1000,19 +1170,27 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
     }
   }
 
+  // Save sdk timestamp
+  sdkTimestamp = this->InternalObj->Frame->imageHeader->timestampUS;
+
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetUserLEDState(int red, int green, int blue, int frequency, bool enabled /* = true */)
+Tracker::RESULT Tracker::SetUserLEDState(int red, int green, int blue, int frequency, bool enabled /* = true */)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("User-LED frequency", info))
   {
     return ERROR_OPTION_NOT_FOUND;
   }
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, frequency) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, frequency) != ftkError::FTK_OK)
   {
     return ERROR_SET_USER_LED;
   }
@@ -1020,7 +1198,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetUserLEDState(int red, int g
   {
     return ERROR_OPTION_NOT_FOUND;
   }
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, red) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, red) != ftkError::FTK_OK)
   {
     return ERROR_SET_USER_LED;
   }
@@ -1028,7 +1206,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetUserLEDState(int red, int g
   {
     return ERROR_OPTION_NOT_FOUND;
   }
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, green) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, green) != ftkError::FTK_OK)
   {
     return ERROR_SET_USER_LED;
   }
@@ -1036,7 +1214,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetUserLEDState(int red, int g
   {
     return ERROR_OPTION_NOT_FOUND;
   }
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, blue) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, blue) != ftkError::FTK_OK)
   {
     return ERROR_SET_USER_LED;
   }
@@ -1045,15 +1223,20 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetUserLEDState(int red, int g
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableUserLED(bool enabled)
+Tracker::RESULT Tracker::EnableUserLED(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Enables the user-LED", info))
   {
     return ERROR_OPTION_NOT_FOUND;
   }
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_USER_LED;
   }
@@ -1061,8 +1244,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableUserLED(bool enabled)
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetLaserEnabled(bool enabled)
+Tracker::RESULT Tracker::SetLaserEnabled(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Enables lasers", info))
@@ -1072,7 +1260,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetLaserEnabled(bool enabled)
 
   int laserEnabledValue = enabled ? 3 : 0;  // 3 = both lasers on
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, laserEnabledValue) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, laserEnabledValue) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_LASER;
   }
@@ -1080,8 +1268,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetLaserEnabled(bool enabled)
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerPairing(bool enabled)
+Tracker::RESULT Tracker::EnableWirelessMarkerPairing(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Active Wireless Pairing Enable", info))
@@ -1089,7 +1282,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerPairing(bo
     return ERROR_OPTION_NOT_FOUND;
   }
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_WIRELESS_MARKER_PAIRING;
   }
@@ -1097,8 +1290,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerPairing(bo
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerStatusStreaming(bool enabled)
+Tracker::RESULT Tracker::EnableWirelessMarkerStatusStreaming(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Active Wireless button statuses streaming", info))
@@ -1106,7 +1304,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerStatusStre
     return ERROR_OPTION_NOT_FOUND;
   }
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_WIRELESS_MARKER_STATUS_STREAMING;
   }
@@ -1114,8 +1312,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerStatusStre
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerBatteryStreaming(bool enabled)
+Tracker::RESULT Tracker::EnableWirelessMarkerBatteryStreaming(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Active Wireless battery state streaming", info))
@@ -1123,7 +1326,7 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerBatteryStr
     return ERROR_OPTION_NOT_FOUND;
   }
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_WIRELESS_MARKER_BATTERY_STREAMING;
   }
@@ -1131,9 +1334,10 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerBatteryStr
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMaxAdditionalEventsNumber(int n)
+Tracker::RESULT Tracker::SetMaxAdditionalEventsNumber(int n)
 {
-  if (n < 0) {
+  if (n < 0)
+  {
     return ERROR_SET_OPTION;
   }
   this->MaxAdditionalEventsNumber = n;
@@ -1141,9 +1345,10 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMaxAdditionalEventsNumber(i
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMax2dFiducialsNumber(int n)
+Tracker::RESULT Tracker::SetMax2dFiducialsNumber(int n)
 {
-  if (n < 0) {
+  if (n < 0)
+  {
     return ERROR_SET_OPTION;
   }
   this->Max2dFiducialsNumber = n;
@@ -1151,9 +1356,10 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMax2dFiducialsNumber(int n)
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMax3dFiducialsNumber(int n)
+Tracker::RESULT Tracker::SetMax3dFiducialsNumber(int n)
 {
-  if (n < 0) {
+  if (n < 0)
+  {
     return ERROR_SET_OPTION;
   }
   this->Max3dFiducialsNumber = n;
@@ -1161,9 +1367,10 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMax3dFiducialsNumber(int n)
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMaxMarkersNumber(int n)
+Tracker::RESULT Tracker::SetMaxMarkersNumber(int n)
 {
-  if (n < 0) {
+  if (n < 0)
+  {
     return ERROR_SET_OPTION;
   }
   this->MaxMarkersNumber = n;
@@ -1174,8 +1381,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetMaxMarkersNumber(int n)
 // spryTrack only options
 // ------------------------------------------
 
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableOnboardProcessing(bool enabled)
+Tracker::RESULT Tracker::EnableOnboardProcessing(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Enable embedded processing", info))
@@ -1183,16 +1395,22 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableOnboardProcessing(bool e
     return ERROR_OPTION_NOT_FOUND;
   }
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_ONBOARD_PROCESSING;
   }
+  LOG_INFO("Embedded processing successfully " << (enabled ? "enabled" : "disabled"));
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableImageStreaming(bool enabled)
+Tracker::RESULT Tracker::EnableImageStreaming(bool enabled)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   // get correct device option number
   const ftkOptionsInfo* info;
   if (!this->GetOptionInfo("Enable images sending", info))
@@ -1200,18 +1418,20 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableImageStreaming(bool enab
     return ERROR_OPTION_NOT_FOUND;
   }
 
-  if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
+  if (ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, enabled) != ftkError::FTK_OK)
   {
     return ERROR_ENABLE_IMAGE_STREAMING;
   }
+  LOG_INFO("Image streaming successfully " << (enabled ? "enabled" : "disabled"));
   return SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetSpryTrackProcessingType(AtracsysTracker::SPRYTRACK_IMAGE_PROCESSING_TYPE processingType)
+Tracker::RESULT Tracker::SetSpryTrackProcessingType(Tracker::SPRYTRACK_IMAGE_PROCESSING_TYPE processingType)
 {
   if (this->DeviceType != SPRYTRACK_180 && this->DeviceType != SPRYTRACK_300)
   {
+    LOG_WARNING("Embedded processing is available only on spryTracks.");
     return ERROR_OPTION_AVAILABLE_ONLY_ON_STK;
   }
   bool succeeded = true;
@@ -1219,11 +1439,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetSpryTrackProcessingType(Atr
   {
     succeeded = succeeded && (this->EnableOnboardProcessing(true) == SUCCESS);
     succeeded = succeeded && (this->EnableImageStreaming(false) == SUCCESS);
+    isOnboardProcessing = true;
   }
   else if (processingType == PROCESSING_ON_PC)
   {
     succeeded = succeeded && (this->EnableOnboardProcessing(false) == SUCCESS);
     succeeded = succeeded && (this->EnableImageStreaming(true) == SUCCESS);
+    isOnboardProcessing = false;
   }
 
   if (!succeeded)
@@ -1237,8 +1459,14 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::SetSpryTrackProcessingType(Atr
 // fusionTrack only options
 // ------------------------------------------
 
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetDroppedFrameCount(int& droppedFrameCount)
+Tracker::RESULT Tracker::GetDroppedFrameCount(int& droppedFrameCount)
 {
+  if (this->InternalObj->isVirtual)
+  {
+    droppedFrameCount = 0;
+    return SUCCESS;
+  }
+
   if (this->DeviceType == FUSIONTRACK_250 || this->DeviceType == FUSIONTRACK_500)
   {
     int32 lost = 0, corrupted = 0;
@@ -1248,12 +1476,12 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetDroppedFrameCount(int& drop
     {
       return ERROR_OPTION_NOT_FOUND;
     }
-    ftkGetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, &lost, ftkOptionGetter::FTK_VALUE);
+    ftkGetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, &lost, ftkOptionGetter::FTK_VALUE);
     if (!this->GetOptionInfo("Counter of corrupted frames", info))
     {
       return ERROR_OPTION_NOT_FOUND;
     }
-    ftkGetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, &corrupted, ftkOptionGetter::FTK_VALUE);
+    ftkGetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, &corrupted, ftkOptionGetter::FTK_VALUE);
 
     droppedFrameCount = lost + corrupted;
     return SUCCESS;
@@ -1262,8 +1490,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetDroppedFrameCount(int& drop
 }
 
 //----------------------------------------------------------------------------
-AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::ResetLostFrameCount()
+Tracker::RESULT Tracker::ResetLostFrameCount()
 {
+  if (this->InternalObj->isVirtual)
+  {
+    return SUCCESS;
+  }
+
   if (this->DeviceType == FUSIONTRACK_250 || this->DeviceType == FUSIONTRACK_500)
   {
     // get correct device option number
@@ -1272,12 +1505,13 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::ResetLostFrameCount()
     {
       return ERROR_OPTION_NOT_FOUND;
     }
-    ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, info->id, RESET_DROPPED_FRAME_COUNT);
+    ftkSetInt32(this->InternalObj->FtkLib, this->InternalObj->TrackerSN, info->id, RESET_DROPPED_FRAME_COUNT);
     return SUCCESS;
   }
   return ERROR_OPTION_AVAILABLE_ONLY_ON_FTK;
 }
 
+//============================================================================
 // ------------------------------------------
 // Fiducial methods
 // ------------------------------------------
@@ -1285,15 +1519,14 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::ResetLostFrameCount()
 // any 2 fiducials within this 3D distance in mm will be considered equal
 const float EQUALITY_DISTANCE_MM = 2.0;
 
-bool AtracsysTracker::Fiducial::operator==(const Fiducial& f)
+bool Fiducial::operator==(const Fiducial& f) const
 {
   // pow is much slower than just x*x for squaring numbers
   float dist2 = (this->xMm - f.xMm) * (this->xMm - f.xMm) + (this->yMm - f.yMm) * (this->yMm - f.yMm) + (this->zMm - f.zMm) * (this->zMm - f.zMm);
   return sqrt(dist2) < EQUALITY_DISTANCE_MM;
 }
 
-// compare fiducials on distance from the origin
-bool AtracsysTracker::Fiducial::operator<(const Fiducial& f) const
+bool Fiducial::operator<(const Fiducial& f) const
 {
   float distF1 = sqrt(this->xMm * this->xMm + this->yMm * this->yMm + this->zMm * this->zMm);
   float distF2 = sqrt(f.xMm * f.xMm + f.yMm * f.yMm + f.zMm * f.zMm);
@@ -1304,7 +1537,7 @@ bool AtracsysTracker::Fiducial::operator<(const Fiducial& f) const
 // Marker methods
 // ------------------------------------------
 
-AtracsysTracker::Marker::Marker()
+Marker::Marker()
 {
   this->MarkerStatus = 0;
   this->TrackingId = -1;
@@ -1312,7 +1545,7 @@ AtracsysTracker::Marker::Marker()
   this->GeometryPresenceMask = -1;
   this->RegistrationErrorMm = 0.0;
 }
-AtracsysTracker::Marker::Marker(int status, int trackingId, int geometryId,
+Marker::Marker(int status, int trackingId, int geometryId,
   vtkMatrix4x4* toolToTracker, int geometryPresenceMask, float registrationErrorMM)
 {
   this->MarkerStatus = status;
@@ -1323,7 +1556,7 @@ AtracsysTracker::Marker::Marker(int status, int trackingId, int geometryId,
   this->RegistrationErrorMm = registrationErrorMM;
 }
 
-AtracsysTracker::Marker::Marker(const AtracsysTracker::Marker& obj)
+Marker::Marker(const Marker& obj)
 {
   this->MarkerStatus = obj.MarkerStatus;
   this->TrackingId = obj.TrackingId;
@@ -1334,7 +1567,7 @@ AtracsysTracker::Marker::Marker(const AtracsysTracker::Marker& obj)
   this->fiducials = obj.fiducials;
 }
 
-bool AtracsysTracker::Marker::AddFiducial(AtracsysTracker::Fiducial fid)
+bool Marker::AddFiducial(Fiducial fid)
 {
   if (fiducials.size() < FTK_MAX_FIDUCIALS)
   {
@@ -1342,5 +1575,7 @@ bool AtracsysTracker::Marker::AddFiducial(AtracsysTracker::Fiducial fid)
     return true;
   }
   else
+  {
     return false;
+  }
 }

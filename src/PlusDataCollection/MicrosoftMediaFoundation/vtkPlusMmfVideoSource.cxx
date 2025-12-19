@@ -15,6 +15,7 @@ Authors include: Adam Rankin
 // Local includes
 #include "PlusConfigure.h"
 #include "PixelCodec.h"
+#include "vtkPlusCameraControlParameters.h"
 #include "vtkPlusChannel.h"
 #include "vtkPlusDataSource.h"
 #include "vtkPlusMmfVideoSource.h"
@@ -36,6 +37,7 @@ Authors include: Adam Rankin
 // Windows includes
 #include <lmerr.h>
 #include <shlwapi.h>
+#include <strmif.h>
 #include <tchar.h>
 #include <windows.h>
 
@@ -44,7 +46,7 @@ Authors include: Adam Rankin
 namespace
 {
   const unsigned int DEFAULT_DEVICE_ID = 0;
-  const FrameSizeType DEFAULT_FRAME_SIZE = {640, 480, 1};
+  const FrameSizeType DEFAULT_FRAME_SIZE = { 640, 480, 1 };
   const double DEFAULT_ACQUISITION_RATE = 30;
   const std::wstring DEFAULT_PIXEL_TYPE_NAME = L"YUY2";
   const GUID DEFAULT_PIXEL_TYPE = MFVideoFormat_YUY2; // see http://msdn.microsoft.com/en-us/library/windows/desktop/aa370819(v=vs.85).aspx
@@ -174,7 +176,7 @@ STDMETHODIMP MmfVideoSourceReader::OnReadSample(HRESULT hrStatus, DWORD dwStream
     UINT32 actualHeight = 0;
     ::MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &actualWidth, &actualHeight);
     if (actualWidth != this->PlusDevice->ActiveVideoFormat.FrameSize[0] ||
-        actualHeight != this->PlusDevice->ActiveVideoFormat.FrameSize[1])
+      actualHeight != this->PlusDevice->ActiveVideoFormat.FrameSize[1])
     {
       LOG_ERROR("Unexpected frame size: " << actualWidth << "x" << actualHeight << " (expected: " << this->PlusDevice->ActiveVideoFormat.FrameSize[0] << "x" << this->PlusDevice->ActiveVideoFormat.FrameSize[1] << ")");
       return S_FALSE;
@@ -246,6 +248,7 @@ vtkStandardNewMacro(vtkPlusMmfVideoSource);
 vtkPlusMmfVideoSource::vtkPlusMmfVideoSource()
   : FrameIndex(0)
   , Mutex(vtkSmartPointer<vtkIGSIORecursiveCriticalSection>::New())
+  , CameraControlParameters(vtkSmartPointer<vtkPlusCameraControlParameters>::New())
 {
   this->MmfSourceReader = new MmfVideoSourceReader(this);
   this->RequireImageOrientationInConfiguration = true;
@@ -278,6 +281,8 @@ void vtkPlusMmfVideoSource::PrintSelf(ostream& os, vtkIndent indent)
   this->Superclass::PrintSelf(os, indent);
 
   os << indent << "FrameIndex: " << (this->FrameIndex ? "On\n" : "Off\n");
+
+  this->CameraControlParameters->PrintSelf(os, indent.GetNextIndent());
 }
 
 //----------------------------------------------------------------------------
@@ -305,12 +310,12 @@ PlusStatus vtkPlusMmfVideoSource::InternalConnect()
   }
 
   if (!MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().SetupDevice(this->RequestedVideoFormat.DeviceId, this->RequestedVideoFormat.StreamIndex,
-      this->RequestedVideoFormat.FrameSize[0], this->RequestedVideoFormat.FrameSize[1], this->AcquisitionRate, pixelFormat))
+    this->RequestedVideoFormat.FrameSize[0], this->RequestedVideoFormat.FrameSize[1], this->AcquisitionRate, pixelFormat))
   {
     LOG_WARNING_W("Unable to init capture device with requested details:"
-                  << " device ID: " << this->RequestedVideoFormat.DeviceId << " (" << GetRequestedDeviceName() << ") stream " << this->RequestedVideoFormat.StreamIndex
-                  << ", " << this->RequestedVideoFormat.FrameSize[0] << "x" << this->RequestedVideoFormat.FrameSize[1]
-                  << ", " << this->AcquisitionRate << "Hz, " << this->ActiveVideoFormat.PixelFormatName);
+      << " device ID: " << this->RequestedVideoFormat.DeviceId << " (" << GetRequestedDeviceName() << ") stream " << this->RequestedVideoFormat.StreamIndex
+      << ", " << this->RequestedVideoFormat.FrameSize[0] << "x" << this->RequestedVideoFormat.FrameSize[1]
+      << ", " << this->AcquisitionRate << "Hz, " << this->ActiveVideoFormat.PixelFormatName);
 
     LogListOfCaptureVideoFormats(this->RequestedVideoFormat.DeviceId);
 
@@ -328,9 +333,9 @@ PlusStatus vtkPlusMmfVideoSource::InternalConnect()
     this->ActiveVideoFormat.PixelFormatName = DEFAULT_PIXEL_TYPE_NAME;
 
     LOG_INFO_W("Backing up to connecting with default capture settings:"
-               << " device ID: " << this->ActiveVideoFormat.DeviceId << " (" << GetActiveDeviceName() << ")"
-               << ", " << this->ActiveVideoFormat.FrameSize[0] << "x" << this->ActiveVideoFormat.FrameSize[1]
-               << ", " << DEFAULT_ACQUISITION_RATE << "Hz, " << this->ActiveVideoFormat.PixelFormatName);
+      << " device ID: " << this->ActiveVideoFormat.DeviceId << " (" << GetActiveDeviceName() << ")"
+      << ", " << this->ActiveVideoFormat.FrameSize[0] << "x" << this->ActiveVideoFormat.FrameSize[1]
+      << ", " << DEFAULT_ACQUISITION_RATE << "Hz, " << this->ActiveVideoFormat.PixelFormatName);
   }
 
   this->MmfSourceReader->CaptureSource = MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().GetMediaSource(this->ActiveVideoFormat.DeviceId);
@@ -342,6 +347,12 @@ PlusStatus vtkPlusMmfVideoSource::InternalConnect()
 
   unsigned int frameRate = MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().GetFrameRate(this->ActiveVideoFormat.DeviceId);
   LOG_DEBUG_W("vtkPlusMmfVideoSource connected to device '" << GetActiveDeviceName() << "' at frame rate of " << frameRate << "Hz");
+
+  if (this->InternalApplyCameraControlParameterChange() == PLUS_FAIL)
+  {
+    LOG_ERROR("Failed to change imaging parameters in the device");
+    return PLUS_FAIL;
+  }
 
   this->FrameIndex = 0;
 
@@ -394,7 +405,7 @@ PlusStatus vtkPlusMmfVideoSource::InternalStartRecording()
     if (FAILED(hr))
     {
       LOG_WARNING_W("Unable to set SourceReader output to requested format: " << this->RequestedVideoFormat.PixelFormatName
-                    << ". Using device default.");
+        << ". Using device default.");
     }
     SafeRelease(&pDecodeType);
 
@@ -427,12 +438,6 @@ PlusStatus vtkPlusMmfVideoSource::InternalStopRecording()
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusMmfVideoSource::NotifyConfigured()
 {
-  if (this->OutputChannels.size() > 1)
-  {
-    LOG_WARNING("vtkPlusMmfVideoSource is expecting one output channel and there are " << this->OutputChannels.size() << " channels. First output channel will be used.");
-    return PLUS_FAIL;
-  }
-
   if (this->OutputChannels.size() == 0)
   {
     LOG_ERROR("No output channels defined for microsoft media foundation video source. Cannot proceed.");
@@ -448,21 +453,26 @@ PlusStatus vtkPlusMmfVideoSource::UpdateFrameSize()
 {
   if (this->MmfSourceReader->CaptureSourceReader != NULL)
   {
-    vtkPlusDataSource* videoSource(NULL);
-    this->GetFirstVideoSource(videoSource);
-    FrameSizeType currentFrameSize = videoSource->GetInputFrameSize();
-    if (currentFrameSize[0] != this->ActiveVideoFormat.FrameSize[0] || currentFrameSize[1] != this->ActiveVideoFormat.FrameSize[1] || currentFrameSize[2] != 1)
+    int numberOfVideoSources = this->GetNumberOfVideoSources();
+    for (int i = 0; i < numberOfVideoSources; ++i)
     {
-      currentFrameSize[0] = this->ActiveVideoFormat.FrameSize[0];
-      currentFrameSize[1] = this->ActiveVideoFormat.FrameSize[1];
-      currentFrameSize[2] = this->ActiveVideoFormat.FrameSize[2];
-      videoSource->SetInputFrameSize(currentFrameSize);
-      videoSource->SetPixelType(VTK_UNSIGNED_CHAR);
-      unsigned int numberOfScalarComponents = (videoSource->GetImageType() == US_IMG_RGB_COLOR ? 3 : 1);
-      videoSource->SetNumberOfScalarComponents(numberOfScalarComponents);
-      this->UncompressedVideoFrame.SetImageType(videoSource->GetImageType());
-      this->UncompressedVideoFrame.SetImageOrientation(videoSource->GetInputImageOrientation());
-      this->UncompressedVideoFrame.AllocateFrame(currentFrameSize, VTK_UNSIGNED_CHAR, numberOfScalarComponents);
+      vtkPlusDataSource* videoSource(NULL);
+      this->GetVideoSourceByIndex(i, videoSource);
+
+      FrameSizeType currentFrameSize = videoSource->GetInputFrameSize();
+      if (currentFrameSize[0] != this->ActiveVideoFormat.FrameSize[0] || currentFrameSize[1] != this->ActiveVideoFormat.FrameSize[1] || currentFrameSize[2] != 1)
+      {
+        currentFrameSize[0] = this->ActiveVideoFormat.FrameSize[0];
+        currentFrameSize[1] = this->ActiveVideoFormat.FrameSize[1];
+        currentFrameSize[2] = this->ActiveVideoFormat.FrameSize[2];
+        videoSource->SetInputFrameSize(currentFrameSize);
+        videoSource->SetPixelType(VTK_UNSIGNED_CHAR);
+        unsigned int numberOfScalarComponents = (videoSource->GetImageType() == US_IMG_RGB_COLOR ? 3 : 1);
+        videoSource->SetNumberOfScalarComponents(numberOfScalarComponents);
+        this->UncompressedVideoFrame.SetImageType(videoSource->GetImageType());
+        this->UncompressedVideoFrame.SetImageOrientation(videoSource->GetInputImageOrientation());
+        this->UncompressedVideoFrame.AllocateFrame(currentFrameSize, VTK_UNSIGNED_CHAR, numberOfScalarComponents);
+      }
     }
   }
 
@@ -486,7 +496,7 @@ PlusStatus vtkPlusMmfVideoSource::ReadConfiguration(vtkXMLDataElement* rootConfi
     this->RequestedVideoFormat.StreamIndex = (DWORD)streamIndex;
   }
 
-  int requestedFrameSize[2] = {static_cast<int>(DEFAULT_FRAME_SIZE[0]), static_cast<int>(DEFAULT_FRAME_SIZE[1])};
+  int requestedFrameSize[2] = { static_cast<int>(DEFAULT_FRAME_SIZE[0]), static_cast<int>(DEFAULT_FRAME_SIZE[1]) };
   if (deviceConfig->GetVectorAttribute("FrameSize", 2, requestedFrameSize))
   {
     if (requestedFrameSize[0] < 0 || requestedFrameSize[1] < 0)
@@ -504,6 +514,12 @@ PlusStatus vtkPlusMmfVideoSource::ReadConfiguration(vtkXMLDataElement* rootConfi
   {
     auto attr = std::string(deviceConfig->GetAttribute("VideoFormat"));
     this->RequestedVideoFormat.PixelFormatName = std::wstring(attr.begin(), attr.end());
+  }
+
+  XML_FIND_NESTED_ELEMENT_OPTIONAL(cameraParameters, deviceConfig, vtkPlusCameraControlParameters::CAMERA_CONTROL_XML_ELEMENT_TAG);
+  if (cameraParameters != NULL)
+  {
+    this->CameraControlParameters->ReadConfiguration(deviceConfig);
   }
 
   return PLUS_SUCCESS;
@@ -527,6 +543,8 @@ PlusStatus vtkPlusMmfVideoSource::WriteConfiguration(vtkXMLDataElement* rootConf
   deviceConfig->SetVectorAttribute("FrameSize", 2, frameSize);
   auto attr = std::string(this->RequestedVideoFormat.PixelFormatName.begin(), this->RequestedVideoFormat.PixelFormatName.end());
   deviceConfig->SetAttribute("VideoFormat", attr.c_str());
+
+  this->CameraControlParameters->WriteConfiguration(deviceConfig);
 
   return PLUS_SUCCESS;
 }
@@ -609,88 +627,89 @@ PlusStatus vtkPlusMmfVideoSource::AddFrame(unsigned char* bufferData, DWORD buff
     return PLUS_SUCCESS;
   }
 
-  vtkPlusDataSource* videoSource(NULL);
-  if (this->GetFirstVideoSource(videoSource) != PLUS_SUCCESS)
+  int numberOfVideoSources = this->GetNumberOfVideoSources();
+  PlusStatus status = PLUS_SUCCESS;
+  for (int i = 0; i < numberOfVideoSources; ++i)
   {
-    return PLUS_FAIL;
-  }
-  FrameSizeType frameSize = videoSource->GetInputFrameSize();
-
-  PlusStatus decodingStatus(PLUS_SUCCESS);
-  PixelCodec::PixelEncoding encoding(PixelCodec::PixelEncoding_ERROR);
-  if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"YUY2"))
-  {
-    if (bufferSize < frameSize[0] * frameSize[1] * 2)
+    vtkPlusDataSource* videoSource(NULL);
+    if (this->GetVideoSourceByIndex(i, videoSource) != PLUS_SUCCESS)
     {
-      LOG_ERROR("Failed to decode pixel data from YUY2 due to buffer size mismatch");
       return PLUS_FAIL;
     }
-    encoding = PixelCodec::PixelEncoding_YUY2;
-  }
-  else if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"MJPG"))
-  {
-    encoding = PixelCodec::PixelEncoding_MJPG;
-  }
-  else if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"RGB24"))
-  {
-    if (bufferSize < frameSize[0] * frameSize[1] * 3)
+    this->FrameIndex++;
+
+    FrameSizeType frameSize = videoSource->GetInputFrameSize();
+
+    PlusStatus decodingStatus(PLUS_SUCCESS);
+    PixelCodec::PixelEncoding encoding(PixelCodec::PixelEncoding_ERROR);
+    if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"YUY2"))
     {
-      LOG_ERROR("Failed to decode pixel data from RGB24 due to buffer size mismatch");
+      if (bufferSize < frameSize[0] * frameSize[1] * 2)
+      {
+        LOG_ERROR("Failed to decode pixel data from YUY2 due to buffer size mismatch");
+        return PLUS_FAIL;
+      }
+      encoding = PixelCodec::PixelEncoding_YUY2;
+    }
+    else if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"MJPG"))
+    {
+      encoding = PixelCodec::PixelEncoding_MJPG;
+    }
+    else if (igsioCommon::IsEqualInsensitive(this->ActiveVideoFormat.PixelFormatName, L"RGB24"))
+    {
+      if (bufferSize < frameSize[0] * frameSize[1] * 3)
+      {
+        LOG_ERROR("Failed to decode pixel data from RGB24 due to buffer size mismatch");
+        return PLUS_FAIL;
+      }
+      encoding = PixelCodec::PixelEncoding_BGR24;
+    }
+    else
+    {
+      LOG_ERROR_W("Unknown pixel type: " << this->ActiveVideoFormat.PixelFormatName << " (only YUY2, MJPG and RGB24 are supported)");
       return PLUS_FAIL;
     }
-    encoding = PixelCodec::PixelEncoding_BGR24;
-  }
-  else
-  {
-    LOG_ERROR_W("Unknown pixel type: " << this->ActiveVideoFormat.PixelFormatName << " (only YUY2, MJPG and RGB24 are supported)");
-    return PLUS_FAIL;
-  }
 
-  if (videoSource->GetImageType() == US_IMG_RGB_COLOR)
-  {
-    decodingStatus = PixelCodec::ConvertToBGR24(PixelCodec::ComponentOrder_RGB, encoding, frameSize[0], frameSize[1], bufferData, (unsigned char*)this->UncompressedVideoFrame.GetScalarPointer());
-  }
-  else
-  {
-    decodingStatus = PixelCodec::ConvertToGray(encoding, frameSize[0], frameSize[1], bufferData, (unsigned char*)this->UncompressedVideoFrame.GetScalarPointer());
-  }
-
-  if (decodingStatus != PLUS_SUCCESS)
-  {
-    LOG_ERROR("Error while decoding the grabbed image");
-    return PLUS_FAIL;
-  }
-
-  this->FrameIndex++;
-  vtkPlusDataSource* aSource(NULL);
-  if (this->GetFirstVideoSource(aSource) != PLUS_SUCCESS)
-  {
-    LOG_ERROR("Unable to retrieve the video source in the media foundation capture device.");
-    return PLUS_FAIL;
-  }
-
-  const double maximumFrameTimeVariance = 0.2;  // to make sure we don't drop frames because of slight variance in acquisition rate, we allow up to 20% higher frame rate before we start dropping frames
-  double acquisitionRate = this->GetAcquisitionRate();
-  double minimumTimeBetweenBetweenRecordedFramesSec = (1.0 - maximumFrameTimeVariance) / this->GetAcquisitionRate();
-  double lastFrameTimeSec = -1.0;
-  double currentTime = vtkIGSIOAccurateTimer::GetSystemTime();
-
-  StreamBufferItem latestFrame;
-  if (aSource->GetNumberOfItems() > 2 && aSource->GetLatestStreamBufferItem(&latestFrame) == ITEM_OK)
-  {
-    lastFrameTimeSec = latestFrame.GetUnfilteredTimestamp(0.0);
-    double secondsSinceLastFrame = currentTime - lastFrameTimeSec;
-    if (lastFrameTimeSec > 0 && secondsSinceLastFrame < minimumTimeBetweenBetweenRecordedFramesSec)
+    if (videoSource->GetImageType() == US_IMG_RGB_COLOR)
     {
-      // For some webcams, the requested acquistion rate may not be availiable (not supported, or error in configuration).
-      // In this case we can artificially limit frames to the requested acquisition rate by ignoring frames.
-
-      // The required time has not elapsed between frames.
-      // Do not need to record this frame.
-      return PLUS_SUCCESS;
+      decodingStatus = PixelCodec::ConvertToBGR24(PixelCodec::ComponentOrder_RGB, encoding, frameSize[0], frameSize[1], bufferData, (unsigned char*)this->UncompressedVideoFrame.GetScalarPointer());
     }
+    else
+    {
+      decodingStatus = PixelCodec::ConvertToGray(encoding, frameSize[0], frameSize[1], bufferData, (unsigned char*)this->UncompressedVideoFrame.GetScalarPointer());
+    }
+
+    if (decodingStatus != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Error while decoding the grabbed image");
+      return PLUS_FAIL;
+    }
+
+    const double maximumFrameTimeVariance = 0.2;  // to make sure we don't drop frames because of slight variance in acquisition rate, we allow up to 20% higher frame rate before we start dropping frames
+    double acquisitionRate = this->GetAcquisitionRate();
+    double minimumTimeBetweenBetweenRecordedFramesSec = (1.0 - maximumFrameTimeVariance) / this->GetAcquisitionRate();
+    double lastFrameTimeSec = -1.0;
+    double currentTime = vtkIGSIOAccurateTimer::GetSystemTime();
+
+    StreamBufferItem latestFrame;
+    if (videoSource->GetNumberOfItems() > 2 && videoSource->GetLatestStreamBufferItem(&latestFrame) == ITEM_OK)
+    {
+      lastFrameTimeSec = latestFrame.GetUnfilteredTimestamp(0.0);
+      double secondsSinceLastFrame = currentTime - lastFrameTimeSec;
+      if (lastFrameTimeSec > 0 && secondsSinceLastFrame < minimumTimeBetweenBetweenRecordedFramesSec)
+      {
+        // For some webcams, the requested acquistion rate may not be availiable (not supported, or error in configuration).
+        // In this case we can artificially limit frames to the requested acquisition rate by ignoring frames.
+
+        // The required time has not elapsed between frames.
+        // Do not need to record this frame.
+        return PLUS_SUCCESS;
+      }
+    }
+
+    PlusStatus sourceStatus = videoSource->AddItem(&this->UncompressedVideoFrame, this->FrameIndex, currentTime);
+    status = sourceStatus != PLUS_SUCCESS ? sourceStatus : status;
   }
-  PlusStatus status = aSource->AddItem(&this->UncompressedVideoFrame, this->FrameIndex, currentTime);
 
   this->Modified();
   return status;
@@ -725,4 +744,170 @@ void vtkPlusMmfVideoSource::LogListOfCaptureDevices()
 std::wstring vtkPlusMmfVideoSource::GetCaptureDeviceName(unsigned int deviceId)
 {
   return MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().GetCaptureDeviceName(deviceId);
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusMmfVideoSource::SetNewCameraControlParameters(const vtkPlusCameraControlParameters& newCameraControlParameters)
+{
+  this->CameraControlParameters->DeepCopy(newCameraControlParameters);
+  if (this->IsConnected() && this->IsRecording())
+  {
+    // If we are connected and recording, apply the new camera control parameters immediately
+    return this->InternalApplyCameraControlParameterChange();
+  }
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusMmfVideoSource::InternalApplyCameraControlParameterChange()
+{
+  if (this->MmfSourceReader->CaptureSource == NULL)
+  {
+    LOG_ERROR("Cannot apply camera control parameter change, capture source is not initialized");
+    return PLUS_FAIL;
+  }
+
+  MfVideoCapture::CaptureDeviceParameters parameters =
+    MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().GetParameters(this->ActiveVideoFormat.DeviceId);
+
+  ////////////////////////////
+  // Pan
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_PAN_DEGREES)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_PAN_DEGREES))
+  {
+    double panDegrees = 0.0;
+    if (this->CameraControlParameters->GetPanDegrees(panDegrees) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get pan camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Pan].CurrentValue = panDegrees;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_PAN_DEGREES, false);
+  }
+
+  ////////////////////////////
+  // Tilt
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_TILT_DEGREES)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_TILT_DEGREES))
+  {
+    double tiltDegrees = 0.0;
+    if (this->CameraControlParameters->GetTiltDegrees(tiltDegrees) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get tilt camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Tilt].CurrentValue = tiltDegrees;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_TILT_DEGREES, false);
+  }
+
+  ////////////////////////////
+  // Roll
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_ROLL_DEGREES)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_ROLL_DEGREES))
+  {
+    double rollDegrees = 0.0;
+    if (this->CameraControlParameters->GetRollDegrees(rollDegrees) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get roll camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Roll].CurrentValue = rollDegrees;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_ROLL_DEGREES, false);
+  }
+
+  ////////////////////////////
+  // Zoom
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_ZOOM_MM)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_ZOOM_MM))
+  {
+    double zoomMm = 0.0;
+    if (this->CameraControlParameters->GetZoomMm(zoomMm) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get zoom camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Zoom].CurrentValue = zoomMm;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_ZOOM_MM, false);
+  }
+
+  ////////////////////////////
+  // Iris
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_IRIS_FSTOP)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_IRIS_FSTOP))
+  {
+    int irisFStop = 0;
+    if (this->CameraControlParameters->GetIrisFStop(irisFStop) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get iris camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Iris].CurrentValue = irisFStop;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_IRIS_FSTOP, false);
+  }
+
+
+  ////////////////////////////
+  // Exposure
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_EXPOSURE_LOG2SECONDS)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_EXPOSURE_LOG2SECONDS))
+  {
+    int exposureLog2Sec = 0;
+    if (this->CameraControlParameters->GetExposureLog2Seconds(exposureLog2Sec) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get exposure camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Exposure].CurrentValue = exposureLog2Sec;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_EXPOSURE_LOG2SECONDS, false);
+  }
+
+  ////////////////////////////
+  // AutoExposure
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_AUTO_EXPOSURE)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_AUTO_EXPOSURE))
+  {
+    bool autoExposure = false;
+    if (this->CameraControlParameters->GetAutoExposure(autoExposure) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get auto exposure camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Exposure].Flag = autoExposure ? CameraControl_Flags_Auto : CameraControl_Flags_Manual;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_AUTO_EXPOSURE, false);
+  }
+
+  ////////////////////////////
+  // Focus
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_FOCUS_MM)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_FOCUS_MM))
+  {
+    double focusMm = 0.0;
+    if (this->CameraControlParameters->GetFocusMm(focusMm) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get focus camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Focus].CurrentValue = focusMm;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_FOCUS_MM, false);
+  }
+
+  ////////////////////////////
+  // AutoFocus
+  if (this->CameraControlParameters->IsSet(vtkPlusCameraControlParameters::KEY_AUTO_FOCUS)
+    && this->CameraControlParameters->IsPending(vtkPlusCameraControlParameters::KEY_AUTO_FOCUS))
+  {
+    bool autoFocus = false;
+    if (this->CameraControlParameters->GetAutoFocus(autoFocus) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Failed to get auto focus camera control parameter");
+      return PLUS_FAIL;
+    }
+    parameters.CameraControlParameters[MfVideoCapture::CaptureDeviceParameters::Focus].Flag = autoFocus ? CameraControl_Flags_Auto : CameraControl_Flags_Manual;
+    this->CameraControlParameters->SetPending(vtkPlusCameraControlParameters::KEY_AUTO_FOCUS, false);
+  }
+
+  ////////////////////////////
+  // Update the parameters
+  MfVideoCapture::MediaFoundationVideoCaptureApi::GetInstance().SetParameters(this->ActiveVideoFormat.DeviceId, parameters);
+
+  return PLUS_SUCCESS;
 }
